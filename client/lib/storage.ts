@@ -4,12 +4,15 @@ const STORAGE_KEYS = {
   RELAPSE_LOGS: "focus_lock_relapse_logs",
   SETTINGS: "focus_lock_settings",
   FOCUS_SESSIONS: "focus_lock_focus_sessions",
+  JOURNAL_ENTRIES: "focus_lock_journal_entries",
+  FOCUS_PRESETS: "focus_lock_focus_presets",
 } as const;
 
 export interface RelapseLog {
   id: string;
   timestamp: number;
   replacementAction: "physical" | "writing" | "breathing";
+  journalEntry?: string;
 }
 
 export interface Settings {
@@ -24,6 +27,21 @@ export interface FocusSession {
   endTime: number;
   duration: number;
   completed: boolean;
+  presetId?: string;
+}
+
+export interface JournalEntry {
+  id: string;
+  timestamp: number;
+  content: string;
+  relapseLogId: string;
+}
+
+export interface FocusPreset {
+  id: string;
+  name: string;
+  duration: number;
+  isDefault: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -31,6 +49,13 @@ const DEFAULT_SETTINGS: Settings = {
   unlockThreshold: 7,
   isFirstSetup: true,
 };
+
+const DEFAULT_PRESETS: FocusPreset[] = [
+  { id: "pomodoro", name: "Pomodoro", duration: 25, isDefault: true },
+  { id: "deep-work", name: "Deep Work", duration: 90, isDefault: true },
+  { id: "short-break", name: "Short Break", duration: 5, isDefault: true },
+  { id: "long-break", name: "Long Break", duration: 15, isDefault: true },
+];
 
 export async function getRelapseLogs(): Promise<RelapseLog[]> {
   try {
@@ -42,16 +67,23 @@ export async function getRelapseLogs(): Promise<RelapseLog[]> {
 }
 
 export async function addRelapseLog(
-  replacementAction: RelapseLog["replacementAction"]
+  replacementAction: RelapseLog["replacementAction"],
+  journalEntry?: string
 ): Promise<RelapseLog> {
   const logs = await getRelapseLogs();
   const newLog: RelapseLog = {
     id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
     timestamp: Date.now(),
     replacementAction,
+    journalEntry,
   };
   logs.push(newLog);
   await AsyncStorage.setItem(STORAGE_KEYS.RELAPSE_LOGS, JSON.stringify(logs));
+
+  if (journalEntry) {
+    await addJournalEntry(journalEntry, newLog.id);
+  }
+
   return newLog;
 }
 
@@ -91,11 +123,78 @@ export async function addFocusSession(session: Omit<FocusSession, "id">): Promis
   return newSession;
 }
 
+export async function getJournalEntries(): Promise<JournalEntry[]> {
+  try {
+    const data = await AsyncStorage.getItem(STORAGE_KEYS.JOURNAL_ENTRIES);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function addJournalEntry(content: string, relapseLogId: string): Promise<JournalEntry> {
+  const entries = await getJournalEntries();
+  const newEntry: JournalEntry = {
+    id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    timestamp: Date.now(),
+    content,
+    relapseLogId,
+  };
+  entries.push(newEntry);
+  await AsyncStorage.setItem(STORAGE_KEYS.JOURNAL_ENTRIES, JSON.stringify(entries));
+  return newEntry;
+}
+
+export async function searchJournalEntries(query: string): Promise<JournalEntry[]> {
+  const entries = await getJournalEntries();
+  if (!query.trim()) return entries;
+  
+  const lowerQuery = query.toLowerCase();
+  return entries.filter(entry => 
+    entry.content.toLowerCase().includes(lowerQuery)
+  );
+}
+
+export async function getFocusPresets(): Promise<FocusPreset[]> {
+  try {
+    const data = await AsyncStorage.getItem(STORAGE_KEYS.FOCUS_PRESETS);
+    if (data) {
+      const saved = JSON.parse(data);
+      return [...DEFAULT_PRESETS, ...saved.filter((p: FocusPreset) => !p.isDefault)];
+    }
+    return DEFAULT_PRESETS;
+  } catch {
+    return DEFAULT_PRESETS;
+  }
+}
+
+export async function addFocusPreset(name: string, duration: number): Promise<FocusPreset> {
+  const presets = await getFocusPresets();
+  const customPresets = presets.filter(p => !p.isDefault);
+  const newPreset: FocusPreset = {
+    id: `custom-${Date.now()}`,
+    name,
+    duration,
+    isDefault: false,
+  };
+  customPresets.push(newPreset);
+  await AsyncStorage.setItem(STORAGE_KEYS.FOCUS_PRESETS, JSON.stringify(customPresets));
+  return newPreset;
+}
+
+export async function deleteFocusPreset(id: string): Promise<void> {
+  const presets = await getFocusPresets();
+  const customPresets = presets.filter(p => !p.isDefault && p.id !== id);
+  await AsyncStorage.setItem(STORAGE_KEYS.FOCUS_PRESETS, JSON.stringify(customPresets));
+}
+
 export async function resetAllData(): Promise<void> {
   await AsyncStorage.multiRemove([
     STORAGE_KEYS.RELAPSE_LOGS,
     STORAGE_KEYS.SETTINGS,
     STORAGE_KEYS.FOCUS_SESSIONS,
+    STORAGE_KEYS.JOURNAL_ENTRIES,
+    STORAGE_KEYS.FOCUS_PRESETS,
   ]);
 }
 
@@ -220,4 +319,33 @@ export function formatHour(hour: number): string {
   if (hour === 12) return "12 PM";
   if (hour < 12) return `${hour} AM`;
   return `${hour - 12} PM`;
+}
+
+export async function exportDataToCSV(): Promise<string> {
+  const [logs, sessions, journals] = await Promise.all([
+    getRelapseLogs(),
+    getFocusSessions(),
+    getJournalEntries(),
+  ]);
+
+  let csv = "Type,Date,Time,Details\n";
+
+  logs.forEach(log => {
+    const date = new Date(log.timestamp);
+    csv += `Relapse,${date.toLocaleDateString()},${date.toLocaleTimeString()},${log.replacementAction}\n`;
+  });
+
+  sessions.forEach(session => {
+    const date = new Date(session.startTime);
+    const durationMins = Math.floor(session.duration / 60);
+    csv += `Focus Session,${date.toLocaleDateString()},${date.toLocaleTimeString()},${durationMins} min - ${session.completed ? "Completed" : "Incomplete"}\n`;
+  });
+
+  journals.forEach(journal => {
+    const date = new Date(journal.timestamp);
+    const content = journal.content.replace(/,/g, ";").replace(/\n/g, " ");
+    csv += `Journal,${date.toLocaleDateString()},${date.toLocaleTimeString()},"${content}"\n`;
+  });
+
+  return csv;
 }

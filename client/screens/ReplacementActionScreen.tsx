@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, StyleSheet, Pressable, BackHandler } from "react-native";
+import { View, StyleSheet, Pressable, BackHandler, TextInput, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 
 import { ThemedText } from "@/components/ThemedText";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { Spacing } from "@/constants/theme";
 import { RootStackParamList } from "@/navigation/RootStackNavigator";
 import { addRelapseLog, RelapseLog } from "@/lib/storage";
@@ -20,6 +22,8 @@ const ACTIONS: { type: ActionType; label: string; duration: number; icon: keyof 
   { type: "breathing", label: "Breathing Exercise", duration: 120, icon: "wind" },
 ];
 
+type BreathPhase = "inhale" | "hold" | "exhale" | "rest";
+
 export default function ReplacementActionScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NavigationProp>();
@@ -28,6 +32,11 @@ export default function ReplacementActionScreen() {
   const [isComplete, setIsComplete] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef(0);
+
+  const [journalText, setJournalText] = useState("");
+  const [breathPhase, setBreathPhase] = useState<BreathPhase>("inhale");
+  const [breathCount, setBreathCount] = useState(4);
+  const breathTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const onBackPress = () => {
@@ -43,13 +52,75 @@ export default function ReplacementActionScreen() {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
+      if (breathTimerRef.current) {
+        clearInterval(breathTimerRef.current);
+      }
     };
   }, [isComplete]);
+
+  const triggerHaptic = (phase: BreathPhase) => {
+    if (Platform.OS === "web") return;
+    
+    switch (phase) {
+      case "inhale":
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        break;
+      case "hold":
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        break;
+      case "exhale":
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        break;
+      case "rest":
+        break;
+    }
+  };
+
+  const startBreathingExercise = () => {
+    let phase: BreathPhase = "inhale";
+    let count = 4;
+    setBreathPhase("inhale");
+    setBreathCount(4);
+    triggerHaptic("inhale");
+
+    breathTimerRef.current = setInterval(() => {
+      count--;
+      
+      if (count <= 0) {
+        switch (phase) {
+          case "inhale":
+            phase = "hold";
+            count = 4;
+            break;
+          case "hold":
+            phase = "exhale";
+            count = 4;
+            break;
+          case "exhale":
+            phase = "rest";
+            count = 2;
+            break;
+          case "rest":
+            phase = "inhale";
+            count = 4;
+            break;
+        }
+        triggerHaptic(phase);
+        setBreathPhase(phase);
+      }
+      
+      setBreathCount(count);
+    }, 1000);
+  };
 
   const handleSelectAction = (action: typeof ACTIONS[0]) => {
     setSelectedAction(action.type);
     setRemainingSeconds(action.duration);
     startTimeRef.current = Date.now();
+
+    if (action.type === "breathing") {
+      startBreathingExercise();
+    }
 
     timerRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
@@ -61,13 +132,20 @@ export default function ReplacementActionScreen() {
         if (timerRef.current) {
           clearInterval(timerRef.current);
         }
+        if (breathTimerRef.current) {
+          clearInterval(breathTimerRef.current);
+        }
+        if (Platform.OS !== "web") {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
       }
     }, 1000);
   };
 
   const handleComplete = async () => {
     if (selectedAction) {
-      await addRelapseLog(selectedAction);
+      const journal = selectedAction === "writing" && journalText.trim() ? journalText.trim() : undefined;
+      await addRelapseLog(selectedAction, journal);
     }
     navigation.goBack();
   };
@@ -78,16 +156,16 @@ export default function ReplacementActionScreen() {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const getActionInstructions = () => {
-    switch (selectedAction) {
-      case "physical":
-        return "Move your body. Walk, stretch, do jumping jacks. Keep moving until the timer ends.";
-      case "writing":
-        return "Write down your thoughts. What triggered this urge? What are you actually feeling?";
-      case "breathing":
-        return "Breathe slowly. In for 4 seconds, hold for 4, out for 4. Repeat until done.";
-      default:
-        return "";
+  const getBreathInstruction = () => {
+    switch (breathPhase) {
+      case "inhale":
+        return "Breathe In";
+      case "hold":
+        return "Hold";
+      case "exhale":
+        return "Breathe Out";
+      case "rest":
+        return "Rest";
     }
   };
 
@@ -135,6 +213,112 @@ export default function ReplacementActionScreen() {
     );
   }
 
+  if (selectedAction === "breathing") {
+    return (
+      <View
+        style={[
+          styles.container,
+          {
+            paddingTop: insets.top + Spacing.xl,
+            paddingBottom: insets.bottom + Spacing.xl,
+          },
+        ]}
+      >
+        <ThemedText type="h3" style={styles.title}>
+          Breathing Exercise
+        </ThemedText>
+
+        <View style={styles.timerContainer}>
+          <View style={styles.breathCircle}>
+            <ThemedText type="h1" style={styles.breathCount}>
+              {breathCount}
+            </ThemedText>
+          </View>
+          <ThemedText type="h2" style={styles.breathInstruction}>
+            {getBreathInstruction()}
+          </ThemedText>
+          <ThemedText type="body" style={styles.remainingTime}>
+            {formatTime(remainingSeconds)} remaining
+          </ThemedText>
+        </View>
+
+        {isComplete ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.completeButton,
+              pressed && styles.completeButtonPressed,
+            ]}
+            onPress={handleComplete}
+          >
+            <ThemedText type="button" style={styles.completeButtonText}>
+              Log and Continue
+            </ThemedText>
+          </Pressable>
+        ) : (
+          <View style={styles.waitingContainer}>
+            <ThemedText type="small" style={styles.waitingText}>
+              Follow the breathing pattern
+            </ThemedText>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  if (selectedAction === "writing") {
+    return (
+      <KeyboardAwareScrollViewCompat
+        style={styles.scrollContainer}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: insets.top + Spacing.xl,
+            paddingBottom: insets.bottom + Spacing.xl,
+          },
+        ]}
+      >
+        <ThemedText type="h3" style={styles.title}>
+          Write Your Thoughts
+        </ThemedText>
+
+        <ThemedText type="body" style={styles.timerSmall}>
+          {formatTime(remainingSeconds)} remaining
+        </ThemedText>
+
+        <TextInput
+          style={styles.journalInput}
+          multiline
+          placeholder="What triggered this urge? What are you actually feeling? Write freely..."
+          placeholderTextColor="#999999"
+          value={journalText}
+          onChangeText={setJournalText}
+          textAlignVertical="top"
+          editable={!isComplete}
+        />
+
+        {isComplete ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.completeButton,
+              pressed && styles.completeButtonPressed,
+            ]}
+            onPress={handleComplete}
+          >
+            <ThemedText type="button" style={styles.completeButtonText}>
+              {journalText.trim() ? "Save and Continue" : "Log and Continue"}
+            </ThemedText>
+          </Pressable>
+        ) : (
+          <View style={styles.waitingContainer}>
+            <ThemedText type="small" style={styles.waitingText}>
+              Keep writing until the timer ends
+            </ThemedText>
+          </View>
+        )}
+      </KeyboardAwareScrollViewCompat>
+    );
+  }
+
   return (
     <View
       style={[
@@ -156,7 +340,7 @@ export default function ReplacementActionScreen() {
       </View>
 
       <ThemedText type="body" style={styles.instructions}>
-        {getActionInstructions()}
+        Move your body. Walk, stretch, do jumping jacks. Keep moving until the timer ends.
       </ThemedText>
 
       {isComplete ? (
@@ -186,6 +370,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#FFFFFF",
+    paddingHorizontal: Spacing.lg,
+  },
+  scrollContainer: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+  scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: Spacing.lg,
   },
   title: {
@@ -236,6 +428,11 @@ const styles = StyleSheet.create({
   timerText: {
     color: "#000000",
   },
+  timerSmall: {
+    textAlign: "center",
+    color: "#666666",
+    marginBottom: Spacing.lg,
+  },
   instructions: {
     textAlign: "center",
     color: "#666666",
@@ -262,5 +459,37 @@ const styles = StyleSheet.create({
   },
   waitingText: {
     color: "#CCCCCC",
+  },
+  breathCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    borderWidth: 3,
+    borderColor: "#000000",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: Spacing.lg,
+  },
+  breathCount: {
+    color: "#000000",
+  },
+  breathInstruction: {
+    color: "#000000",
+    marginBottom: Spacing.md,
+  },
+  remainingTime: {
+    color: "#666666",
+  },
+  journalInput: {
+    flex: 1,
+    minHeight: 200,
+    borderWidth: 2,
+    borderColor: "#000000",
+    padding: Spacing.md,
+    fontSize: 16,
+    color: "#000000",
+    backgroundColor: "#FFFFFF",
+    marginBottom: Spacing.lg,
+    fontFamily: "monospace",
   },
 });

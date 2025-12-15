@@ -1,9 +1,11 @@
 import React, { useState, useCallback, useRef } from "react";
-import { View, ScrollView, StyleSheet, Pressable, Alert } from "react-native";
+import { View, ScrollView, StyleSheet, Pressable, Alert, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 
 import { ThemedText } from "@/components/ThemedText";
 import { Spacing } from "@/constants/theme";
@@ -12,6 +14,7 @@ import {
   getSettings,
   saveSettings,
   resetAllData,
+  exportDataToCSV,
   Settings,
 } from "@/lib/storage";
 
@@ -25,6 +28,7 @@ export default function SettingsScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [isResetPressing, setIsResetPressing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadSettings = useCallback(async () => {
@@ -83,6 +87,42 @@ export default function SettingsScreen() {
     setIsResetPressing(false);
     if (resetTimeoutRef.current) {
       clearTimeout(resetTimeoutRef.current);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      setIsExporting(true);
+      const csvData = await exportDataToCSV();
+      
+      if (Platform.OS === "web") {
+        const blob = new Blob([csvData], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `focus_lock_export_${new Date().toISOString().split("T")[0]}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        Alert.alert("Export Complete", "Your data has been downloaded.");
+      } else {
+        const fileName = `focus_lock_export_${new Date().toISOString().split("T")[0]}.csv`;
+        const filePath = `${FileSystem.documentDirectory}${fileName}`;
+        await FileSystem.writeAsStringAsync(filePath, csvData);
+        
+        const isAvailable = await Sharing.isAvailableAsync();
+        if (isAvailable) {
+          await Sharing.shareAsync(filePath, {
+            mimeType: "text/csv",
+            dialogTitle: "Export Focus Lock Data",
+          });
+        } else {
+          Alert.alert("Export Complete", "Data saved but sharing is not available on this device.");
+        }
+      }
+    } catch (error) {
+      Alert.alert("Export Failed", "Could not export your data. Please try again.");
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -183,6 +223,29 @@ export default function SettingsScreen() {
         </Pressable>
       </View>
 
+      <View style={styles.section}>
+        <ThemedText type="h4" style={styles.sectionTitle}>
+          Data Backup
+        </ThemedText>
+        <ThemedText type="small" style={styles.sectionDescription}>
+          Export all your data as a CSV file for personal backup.
+        </ThemedText>
+        <Pressable
+          style={({ pressed }) => [
+            styles.exportButton,
+            isExporting && styles.exportButtonDisabled,
+            pressed && !isExporting && styles.exportButtonPressed,
+          ]}
+          onPress={handleExport}
+          disabled={isExporting}
+        >
+          <Feather name="download" size={18} color="#000000" style={styles.exportIcon} />
+          <ThemedText type="button" style={styles.exportButtonText}>
+            {isExporting ? "Exporting..." : "Export Data to CSV"}
+          </ThemedText>
+        </Pressable>
+      </View>
+
       <View style={styles.dangerZone}>
         <ThemedText type="h4" style={styles.dangerTitle}>
           Danger Zone
@@ -267,6 +330,27 @@ const styles = StyleSheet.create({
   },
   saveButtonText: {
     color: "#FFFFFF",
+  },
+  exportButton: {
+    height: Spacing.buttonHeight,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 2,
+    borderColor: "#000000",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  exportButtonPressed: {
+    backgroundColor: "#F5F5F5",
+  },
+  exportButtonDisabled: {
+    borderColor: "#CCCCCC",
+  },
+  exportIcon: {
+    marginRight: Spacing.sm,
+  },
+  exportButtonText: {
+    color: "#000000",
   },
   dangerZone: {
     marginTop: Spacing.xl,

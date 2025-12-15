@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from "react";
-import { View, StyleSheet, Pressable, Alert } from "react-native";
+import { View, StyleSheet, Pressable, Alert, Modal, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -15,8 +15,10 @@ import {
   getTodayRelapseCount,
   getRiskWindows,
   formatHour,
+  getFocusPresets,
   RelapseLog,
   Settings,
+  FocusPreset,
 } from "@/lib/storage";
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, "Home">;
@@ -29,14 +31,18 @@ export default function HomeScreen() {
   const [streak, setStreak] = useState(0);
   const [todayCount, setTodayCount] = useState(0);
   const [riskWarning, setRiskWarning] = useState<string | null>(null);
+  const [presets, setPresets] = useState<FocusPreset[]>([]);
+  const [showPresetModal, setShowPresetModal] = useState(false);
 
   const loadData = useCallback(async () => {
-    const [logsData, settingsData] = await Promise.all([
+    const [logsData, settingsData, presetsData] = await Promise.all([
       getRelapseLogs(),
       getSettings(),
+      getFocusPresets(),
     ]);
     setLogs(logsData);
     setSettings(settingsData);
+    setPresets(presetsData);
     setStreak(getCurrentStreak(logsData));
     setTodayCount(getTodayRelapseCount(logsData));
 
@@ -67,6 +73,16 @@ export default function HomeScreen() {
   };
 
   const handleStartFocus = () => {
+    setShowPresetModal(true);
+  };
+
+  const handleSelectPreset = (preset: FocusPreset) => {
+    setShowPresetModal(false);
+    navigation.navigate("FocusSession", { duration: preset.duration });
+  };
+
+  const handleCustomDuration = () => {
+    setShowPresetModal(false);
     if (settings) {
       navigation.navigate("FocusSession", { duration: settings.focusDuration });
     }
@@ -200,6 +216,54 @@ export default function HomeScreen() {
           </ThemedText>
         </Pressable>
       </View>
+
+      <Modal
+        visible={showPresetModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPresetModal(false)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setShowPresetModal(false)}
+        >
+          <View style={styles.modalContent}>
+            <ThemedText type="h4" style={styles.modalTitle}>
+              Choose Duration
+            </ThemedText>
+            <ScrollView style={styles.presetList}>
+              {presets.map((preset) => (
+                <Pressable
+                  key={preset.id}
+                  style={({ pressed }) => [
+                    styles.presetItem,
+                    pressed && styles.presetItemPressed,
+                  ]}
+                  onPress={() => handleSelectPreset(preset)}
+                >
+                  <ThemedText type="body" style={styles.presetName}>
+                    {preset.name}
+                  </ThemedText>
+                  <ThemedText type="small" style={styles.presetDuration}>
+                    {preset.duration} min
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Pressable
+              style={({ pressed }) => [
+                styles.modalCloseButton,
+                pressed && styles.modalCloseButtonPressed,
+              ]}
+              onPress={() => setShowPresetModal(false)}
+            >
+              <ThemedText type="button" style={styles.modalCloseText}>
+                Cancel
+              </ThemedText>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -294,5 +358,56 @@ const styles = StyleSheet.create({
   },
   disabledText: {
     color: "#CCCCCC",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: Spacing.lg,
+  },
+  modalContent: {
+    backgroundColor: "#FFFFFF",
+    width: "100%",
+    maxHeight: "70%",
+    padding: Spacing.lg,
+  },
+  modalTitle: {
+    color: "#000000",
+    textAlign: "center",
+    marginBottom: Spacing.lg,
+  },
+  presetList: {
+    maxHeight: 300,
+  },
+  presetItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    borderWidth: 2,
+    borderColor: "#000000",
+    marginBottom: Spacing.sm,
+  },
+  presetItemPressed: {
+    backgroundColor: "#F5F5F5",
+  },
+  presetName: {
+    color: "#000000",
+  },
+  presetDuration: {
+    color: "#666666",
+  },
+  modalCloseButton: {
+    marginTop: Spacing.md,
+    paddingVertical: Spacing.md,
+    alignItems: "center",
+  },
+  modalCloseButtonPressed: {
+    opacity: 0.6,
+  },
+  modalCloseText: {
+    color: "#666666",
   },
 });
